@@ -1,4 +1,4 @@
-import wyzecam, gc, time, subprocess, multiprocessing, warnings, os, datetime, pickle, sys, io, wyze_sdk
+import wyzecam, gc, time, subprocess, threading, warnings, os, datetime, pickle, sys, io, wyze_sdk, bottle
 
 class wyze_bridge:
 	def __init__(self):
@@ -89,7 +89,6 @@ class wyze_bridge:
 	def start_stream(self,camera):
 		while True:
 			try:
-				tutk_library = wyzecam.tutk.tutk.load_library()
 				resolution = 3 if camera.product_model == 'WYZEDB3' else 0
 				bitrate = 120
 				res = 'HD'
@@ -100,9 +99,7 @@ class wyze_bridge:
 					if os.environ['QUALITY'][2:].isdigit() and 30 <= int(os.environ['QUALITY'][2:]) <= 240:
 						# bitrate = min([30,60,120,150,240], key=lambda x:abs(x-int(os.environ['QUALITY'][2:])))
 						bitrate = int(os.environ['QUALITY'][2:])
-				wyzecam.tutk.tutk.iotc_initialize(tutk_library)
-				wyzecam.tutk.tutk.av_initialize(tutk_library)	
-				with wyzecam.iotc.WyzeIOTCSession(tutk_library,self.user,camera,resolution,bitrate) as sess:
+				with wyzecam.iotc.WyzeIOTCSession(self.tutk_library,self.user,camera,resolution,bitrate) as sess:
 					print(f'{datetime.datetime.now().strftime("%Y/%m/%d %X")} [{camera.nickname}] Starting {res} {bitrate}kb/s Stream for WyzeCam {self.model_names.get(camera.product_model)} ({camera.product_model}) running FW: {sess.camera.camera_info["basicInfo"]["firmware"]} from {camera.ip} (WiFi Quality: {sess.camera.camera_info["basicInfo"]["wifidb"]}%)...',flush=True)
 					cmd = ('ffmpeg ' + os.environ['FFMPEG_CMD'].strip("\'").strip('\"') + camera.nickname.replace(' ', '-').replace('#', '').lower()).split() if os.environ.get('FFMPEG_CMD') else ['ffmpeg',
 						'-hide_banner',
@@ -138,14 +135,15 @@ class wyze_bridge:
 					ffmpeg.kill()
 					time.sleep(0.5)
 					ffmpeg.wait()
-				if 'tutk_library' in locals():
-					wyzecam.tutk.tutk.av_deinitialize(tutk_library)
-					wyzecam.tutk.tutk.iotc_deinitialize(tutk_library)
 				gc.collect()
 	def run(self):
 		self.user = self.authWyze('user')
-		for camera in self.filtered_cameras():
-			multiprocessing.Process(target=self.start_stream, args=[camera]).start()
+		self.cameras = self.filtered_cameras()
+		self.tutk_library = wyzecam.tutk.tutk.load_library()
+		wyzecam.tutk.tutk.iotc_initialize(self.tutk_library)
+		wyzecam.tutk.tutk.av_initialize(self.tutk_library,len(self.cameras))	
+		for camera in self.cameras:
+			threading.Thread(target=self.start_stream, args=[camera]).start()
 
 if __name__ == "__main__":
 	wyze_bridge().run()

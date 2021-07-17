@@ -1,8 +1,8 @@
-import wyzecam, gc, time, subprocess, threading, warnings, os, datetime, pickle, sys, io, wyze_sdk, bottle
+import wyzecam, gc, time, subprocess, threading, warnings, os, datetime, pickle, sys, io, wyze_sdk, bottle,cv2
 
 class wyze_bridge:
 	def __init__(self):
-		print('STARTING DOCKER-WYZE-BRIDGE v0.3.2.1', flush=True)
+		print('STARTING DOCKER-WYZE-BRIDGE v0.4.0 BETA', flush=True)
 	
 	if 'DEBUG_FFMPEG' not in os.environ:
 		warnings.filterwarnings("ignore")
@@ -16,11 +16,11 @@ class wyze_bridge:
 		return True if cam.nickname.upper() in self.get_env('FILTER_NAMES') or cam.mac in self.get_env('FILTER_MACS') or cam.product_model in self.get_env('FILTER_MODEL') or self.model_names.get(cam.product_model) in self.get_env('FILTER_MODEL') else False
 
 	def twofactor(self):
-		mfa_token = '/tokens/mfa_token'
-		print(f'MFA Token Required\nAdd token to {mfa_token}',flush=True)
+		self.mfa_token = '/tokens/mfa_token'
+		print(f'MFA Token Required\nVisit /auth or Add token to {self.mfa_token}',flush=True)
 		while True:
-			if os.path.exists(mfa_token) and os.path.getsize(mfa_token) > 0:
-				with open(mfa_token,'r+') as f:
+			if os.path.exists(self.mfa_token) and os.path.getsize(self.mfa_token) > 0:
+				with open(self.mfa_token,'r+') as f:
 					lines = f.read().strip()
 					f.truncate(0)
 					print(f'Using {lines} as token',flush=True)
@@ -73,17 +73,18 @@ class wyze_bridge:
 
 	def filtered_cameras(self):
 		cams = self.authWyze('cameras')
+		self.total_cams = len(cams)
 		if 'FILTER_MODE' in os.environ and os.environ['FILTER_MODE'].upper() in ('BLOCK','BLACKLIST','EXCLUDE','IGNORE','REVERSE'):
 			filtered = list(filter(lambda cam: not self.env_filter(cam),cams))
 			if len(filtered) >0:
-				print(f'BLACKLIST MODE ON \nSTARTING {len(filtered)} OF {len(cams)} CAMERAS')
+				print(f'BLACKLIST MODE ON \nSTARTING {len(filtered)} OF {self.total_cams} CAMERAS')
 				return filtered
-		if any(key.startswith('FILTER_') for key in os.environ):		
+		if any(key.startswith('FILTER_') for key in os.environ):	
 			filtered = list(filter(self.env_filter,cams))
 			if len(filtered) > 0:
-				print(f'WHITELIST MODE ON \nSTARTING {len(filtered)} OF {len(cams)} CAMERAS')
+				print(f'WHITELIST MODE ON \nSTARTING {len(filtered)} OF {self.total_cams} CAMERAS')
 				return filtered
-		print(f'STARTING ALL {len(cams)} CAMERAS')
+		print(f'STARTING ALL {self.total_cams} CAMERAS')
 		return cams
 
 	def start_stream(self,camera):
@@ -136,14 +137,76 @@ class wyze_bridge:
 					time.sleep(0.5)
 					ffmpeg.wait()
 				gc.collect()
+	def mjpeg(self,name):
+		cam = [camera for camera in self.cameras if camera.nickname.replace(' ', '-').replace('#', '').lower() == name][0]
+		while True:
+			try:
+				with wyzecam.iotc.WyzeIOTCSession(self.tutk_library,self.user,cam) as sess:
+					for (frame, _)  in sess.recv_video_frame_ndarray():
+						yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + bytes(cv2.imencode('.jpg', frame)[1]) + b'\r\n')
+			except Exception as ex:
+				print(f'{datetime.datetime.now().strftime("%Y/%m/%d %X")} [{camera.nickname}] {ex}',flush=True)
+				if str(ex) == 'IOTC_ER_CAN_NOT_FIND_DEVICE':
+					print(f'{datetime.datetime.now().strftime("%Y/%m/%d %X")} [{camera.nickname}] Camera offline? Sleeping for 10s.',flush=True)
+					time.sleep(10)
+			finally:
+				gc.collect()
+
 	def run(self):
 		self.user = self.authWyze('user')
 		self.cameras = self.filtered_cameras()
 		self.tutk_library = wyzecam.tutk.tutk.load_library()
 		wyzecam.tutk.tutk.iotc_initialize(self.tutk_library)
-		wyzecam.tutk.tutk.av_initialize(self.tutk_library,len(self.cameras))	
-		for camera in self.cameras:
-			threading.Thread(target=self.start_stream, args=[camera]).start()
+		wyzecam.tutk.tutk.av_initialize(self.tutk_library,len(self.cameras))
+		if os.environ.get('HTTP_SERVER'):
+			print('!! HTTP_SERVER ENABLED!!', flush=True)
+			print('!! RTSP-SIMPLE-SERVER DISABLED!!', flush=True)
+		else:
+			for camera in self.cameras:
+				threading.Thread(target=self.start_stream, args=[camera]).start()
+
+class http_server:
+	@bottle.get('/')
+	def index():
+		if not hasattr(bridge, 'user'):
+			return '<h4>Bridge not authorized</h4><a href="/auth">Enter Verification Code</a>'
+		host = bottle.request.get_header('host').split(':')
+		html = '<h4>Camera URIs<h4><table><thead><tr><th>Camera</th><th>RTSP</th><th>RTMP</th><th>HLS</th><th>MJPEG</th></tr></thead><tbody>'
+		for cam in bridge.cameras:
+			name = cam.nickname.replace(' ', '-').replace('#', '').lower()
+			html += f'<tr><td><a href="/mjpeg/{name}">{cam.nickname}</a></td><td>rtsp://{host[0]}:8554/{name}</td><td>rtmp://{host[0]}:1935/{name}</td><td>http://{host[0]}:8888/{name}/stream.m3u8</td><td>http://{host[0]}:{host[1]}/{name}</td></tr>'
+		html += '</tbody></table>'
+		return html
+	@bottle.get('/auth')
+	def get_auth():
+		if hasattr(bridge, 'user') or not hasattr(bridge, 'mfa_token'):
+			return 'Verification code not required at this time'
+		return '<h4>Enter MFA Verification Code:</h4><form action="/auth" method="post"><input type="text" name="token"><input type="submit" value="Submit"></form>'
+	@bottle.post('/auth')
+	def post_auth():
+		code = bottle.request.forms.get('token')
+		with open(bridge.mfa_token,'w') as f:
+			f.write(code)
+		return f'<h4>Using {code} as the verification code</h4><a href="/">Cameras</a>'
+	
+	@bottle.get('/mjpeg/<cam_name>')
+	def mjpeg(cam_name):
+		cameras = bridge.cameras
+		cam = [camera for camera in cameras if camera.nickname.replace(' ', '-').replace('#', '').lower() == cam_name][0]
+		links = [f'<a href="/mjpeg/{cam.nickname.replace(" ", "-").replace("#", "").lower()}">{cam.nickname}</a>' for cam in cameras]
+		return f'<h4>{cam.nickname} ({cam.product_model}) - {cam.ip} </h4>{*links,}<img src="/{cam_name}" style="width: 100vw;">'
+
+	@bottle.get('/<cam_name>')
+	def mjpeg(cam_name):
+		bottle.response.headers['Content-Type'] = 'multipart/x-mixed-replace; boundary=frame'
+		return bridge.mjpeg(cam_name)
+
+	def run():
+		bottle.run(host='0.0.0.0', port=8080, debug=True)
+
 
 if __name__ == "__main__":
-	wyze_bridge().run()
+	bridge = wyze_bridge()
+	if os.environ.get('HTTP_SERVER'):
+		threading.Thread(target=http_server.run).start()
+	bridge.run()

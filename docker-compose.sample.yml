@@ -19,6 +19,9 @@ services:
         build: 
             context: ./app
             # dockerfile: Dockerfile.arm
+        ports:
+            - 8080:8080
         environment:
+            - HTTP_SERVER=true
             - WYZE_EMAIL=
             - WYZE_PASSWORD=

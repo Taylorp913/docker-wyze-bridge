@@ -101,14 +101,14 @@ environment:
 
 Two-factor authentication ("Two-Step Verification" in the wyze app) is supported and will automatically be detected, however additional steps are required to enter your verification code.
 
-- echo the verification code directly to `/wyze-bridge/tokens/mfa_token`
+- echo the verification code directly to `/tokens/mfa_token`
 ```bash
-docker exec -it wyze-bridge sh -c 'echo "123456" > /wyze-bridge/tokens/mfa_token'
+docker exec -it wyze-bridge sh -c 'echo "123456" > /tokens/mfa_token'
 ```
-- Mount `/wyze-bridge/tokens/` locally and add your verification code to a new file `mfa_token`: 
+- Mount `/tokens/` locally and add your verification code to a new file `mfa_token`: 
 ```YAML
 volumes: 
-    - ./tokens:/wyze-bridge/tokens/
+    - ./tokens:/tokens/
 ```
 
 

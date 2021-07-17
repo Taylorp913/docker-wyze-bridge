@@ -16,7 +16,7 @@ class wyze_bridge:
 		return True if cam.nickname.upper() in self.get_env('FILTER_NAMES') or cam.mac in self.get_env('FILTER_MACS') or cam.product_model in self.get_env('FILTER_MODEL') or self.model_names.get(cam.product_model) in self.get_env('FILTER_MODEL') else False
 
 	def twofactor(self):
-		mfa_token = '/wyze-bridge/tokens/mfa_token'
+		mfa_token = '/tokens/mfa_token'
 		print(f'MFA Token Required\nAdd token to {mfa_token}',flush=True)
 		while True:
 			if os.path.exists(mfa_token) and os.path.getsize(mfa_token) > 0:
@@ -33,7 +33,7 @@ class wyze_bridge:
 			time.sleep(2)
 
 	def authWyze(self,name):
-		pkl_data = f'/wyze-bridge/tokens/{name}.pickle'
+		pkl_data = f'/tokens/{name}.pickle'
 		if os.path.exists(pkl_data) and os.path.getsize(pkl_data) > 0:
 			if os.environ.get('FRESH_DATA') and ('auth' not in name or not hasattr(self,'auth')):
 				print(f'[FORCED REFRESH] Removing local cache for {name}!',flush=True)

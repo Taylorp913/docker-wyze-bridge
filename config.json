@@ -1,0 +1,23 @@
+{
+        "name": "Wyze Rstp Bridge",
+        "version": "1",
+        "slug": "wyze_bridge",
+        "description": "Publishes wyze camera video feeds",
+        "url": "https://github.com/mrlt8/docker-wyze-bridge",
+        "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
+        "startup": "application",
+        "boot": "auto",
+        "options": {
+                "WYZE_EMAIL": "",
+                "WYZE_PASSWORD": ""
+        },
+        "schema": {
+                "WYZE_EMAIL": "str",
+                "WYZE_PASSWORD": "password"
+        },
+        "ports": {
+                "1935": 1935,
+                "8554": 8554,
+                "8888": 8888
+        }
+}
